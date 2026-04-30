@@ -1,0 +1,12 @@
+*.elf
+*.hex
+*.bin
+build/
+.build/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
