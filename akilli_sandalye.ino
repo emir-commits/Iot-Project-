@@ -1,5 +1,5 @@
-// Akilli Sandalye - ESP32 IoT Projesi
-// SSD1306 OLED + WiFi + Buzzer
+// Akilli Sandalye Projesi
+// MPU6050 + OLED + WiFi
 
 #include <Wire.h>
 #include <WiFi.h>
@@ -9,21 +9,24 @@
 #include <ArduinoJson.h>
 #include <math.h>
 
-const char* WIFI_SSID = "WIFI_ADINIZ";
-const char* WIFI_PASS = "WIFI_SIFRENIZ";
+const char* WIFI_SSID = "TurkTelekom_Z34ET";
+const char* WIFI_PASS = "aB3E0D93cC48f";
 
+#define LIMIT_SWITCH_PIN  27
 #define BUZZER_PIN        18
 #define SCREEN_WIDTH     128
 #define SCREEN_HEIGHT     64
 #define OLED_RESET        -1
 #define OLED_I2C_ADDR  0x3C
 
-float sapmaEsikDerece = 15.0;
+float sapmaEsikDerece = 20.0;
 #define KOTU_DURUS_SURE_MS  2000
 #define KALIBRASYON_SURE_MS 5000
 #define SENSOR_OKUMA_MS      100
 #define BUZZER_BEEP_MS       200
 #define BUZZER_PAUSE_MS      300
+#define ALPHA                0.85
+
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 WebServer server(80);
@@ -41,6 +44,7 @@ unsigned long oturmaBaslangic = 0;
 unsigned long kotuDurusBaslangic = 0;
 unsigned long sonSensorOkuma = 0;
 unsigned long sonBuzzerToggle = 0;
+unsigned long oncekiZaman = 0;
 
 bool kotuDurus = false;
 bool buzzerAktif = false;
@@ -48,7 +52,6 @@ bool buzzerDurumu = false;
 bool wifiConnected = false;
 bool buzzerMuted = false;
 bool remoteRecalib = false;
-bool simOturuyor = true;
 
 void sistemBaslat();
 void wifiBaslat();
@@ -59,6 +62,7 @@ void handleCORS();
 void oledBeklemeEkrani();
 void oledKalibrasyonEkrani(int kalan);
 void oledTakipEkrani(float p, float r, bool iyi, unsigned long sure);
+void aciHesapla(float ax, float ay, float az, float gx, float gy, float gz, float dt);
 void buzzerKontrol();
 
 void setup() {
@@ -66,6 +70,7 @@ void setup() {
   delay(500);
   Serial.println("Sistem baslatiliyor...");
 
+  pinMode(LIMIT_SWITCH_PIN, INPUT_PULLUP);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
 
@@ -74,6 +79,7 @@ void setup() {
   wifiBaslat();
   setupWebServer();
 
+  oncekiZaman = millis();
   Serial.println("Sistem hazir");
 }
 
@@ -81,7 +87,9 @@ void loop() {
   server.handleClient();
 
   unsigned long simdi = millis();
-  bool oturuyor = simOturuyor;
+  // TODO: switch baglaninca asagidaki satiri ac
+  // bool oturuyor = (digitalRead(LIMIT_SWITCH_PIN) == LOW);
+  bool oturuyor = true;
 
   switch (durum) {
 
@@ -90,7 +98,11 @@ void loop() {
         durum = KALIBRASYON;
         kalibrasyonBaslangic = simdi;
         kalTopPitch = 0.0; kalTopRoll = 0.0; kalSayac = 0;
-        pitch = 0.0; roll = 0.0;
+        float ax, ay, az, gx, gy, gz;
+        okuMPU6050(ax, ay, az, gx, gy, gz);
+        pitch = atan2(ay, sqrt(ax * ax + az * az)) * 180.0 / PI;
+        roll = atan2(-ax, az) * 180.0 / PI;
+        oncekiZaman = simdi;
       } else {
         oledBeklemeEkrani();
         delay(200);
@@ -104,7 +116,11 @@ void loop() {
       }
       if (simdi - sonSensorOkuma >= SENSOR_OKUMA_MS) {
         sonSensorOkuma = simdi;
-        pitch = 0.0; roll = 0.0;
+        float dt = (simdi - oncekiZaman) / 1000.0;
+        oncekiZaman = simdi;
+        float ax, ay, az, gx, gy, gz;
+        okuMPU6050(ax, ay, az, gx, gy, gz);
+        aciHesapla(ax, ay, az, gx, gy, gz, dt);
         kalTopPitch += pitch; kalTopRoll += roll; kalSayac++;
       }
       {
@@ -133,10 +149,11 @@ void loop() {
       }
       if (simdi - sonSensorOkuma >= SENSOR_OKUMA_MS) {
         sonSensorOkuma = simdi;
-
-        float t = simdi / 1000.0;
-        pitch = sin(t * 0.5) * 20.0;
-        roll = cos(t * 0.3) * 10.0;
+        float dt = (simdi - oncekiZaman) / 1000.0;
+        oncekiZaman = simdi;
+        float ax, ay, az, gx, gy, gz;
+        okuMPU6050(ax, ay, az, gx, gy, gz);
+        aciHesapla(ax, ay, az, gx, gy, gz, dt);
 
         float sapmaPitch = fabs(pitch - refPitch);
         float sapmaRoll = fabs(roll - refRoll);
@@ -159,6 +176,11 @@ void loop() {
           durum = KALIBRASYON;
           kalibrasyonBaslangic = simdi;
           kalTopPitch = 0.0; kalTopRoll = 0.0; kalSayac = 0;
+          float ax, ay, az, gx, gy, gz;
+          okuMPU6050(ax, ay, az, gx, gy, gz);
+          pitch = atan2(ay, sqrt(ax * ax + az * az)) * 180.0 / PI;
+          roll = atan2(-ax, az) * 180.0 / PI;
+          oncekiZaman = simdi;
           break;
         }
 
@@ -243,7 +265,7 @@ void handleData() {
   doc["roll"] = round(roll * 10.0) / 10.0;
   doc["refPitch"] = round(refPitch * 10.0) / 10.0;
   doc["refRoll"] = round(refRoll * 10.0) / 10.0;
-  doc["sitting"] = simOturuyor;
+  doc["sitting"] = (digitalRead(LIMIT_SWITCH_PIN) == LOW);
   doc["bad"] = kotuDurus;
   doc["buzzer"] = buzzerAktif;
   doc["mode"] = (int)durum;
@@ -286,7 +308,7 @@ void handleControl() {
 
 void sistemBaslat() {
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR)) {
-    Serial.println("OLED bulunamadi!");
+    Serial.println("OLED Hata!");
     while (true) { delay(1000); }
   }
   display.clearDisplay();
@@ -296,6 +318,29 @@ void sistemBaslat() {
   display.println(F("Sistem Basliyor..."));
   display.display();
 
+  Wire.beginTransmission(0x68);
+  Wire.write(0x6B);
+  Wire.write(0);
+  byte err = Wire.endTransmission(true);
+
+  Wire.beginTransmission(0x68);
+  Wire.write(0x1A);
+  Wire.write(0x04);
+  Wire.endTransmission(true);
+  
+  if (err != 0) {
+    Serial.println("MPU6050 Hata!");
+    display.clearDisplay();
+    display.setCursor(0, 15);
+    display.println(F("MPU6050 HATA!"));
+    display.setCursor(0, 30);
+    display.println(F("Baglantiyi Kontrol Et"));
+    display.display();
+    while (true) { delay(1000); }
+  } else {
+    Serial.println("MPU6050 Hazir");
+  }
+
   display.clearDisplay();
   display.setCursor(15, 5);
   display.println(F("Akilli Sandalye"));
@@ -303,9 +348,41 @@ void sistemBaslat() {
   display.println(F("Durus Takip Sistemi"));
   display.drawLine(0, 35, 128, 35, SSD1306_WHITE);
   display.setCursor(10, 42);
-  display.println(F("v1.0 WiFi+IoT"));
+  display.println(F("v2.0 WiFi+IoT"));
   display.display();
   delay(2000);
+}
+
+void okuMPU6050(float &ax, float &ay, float &az, float &gx, float &gy, float &gz) {
+  Wire.beginTransmission(0x68);
+  Wire.write(0x3B);
+  Wire.endTransmission(false);
+  Wire.requestFrom((uint16_t)0x68, (uint8_t)14, true);
+
+  int16_t AcX = Wire.read()<<8 | Wire.read();
+  int16_t AcY = Wire.read()<<8 | Wire.read();
+  int16_t AcZ = Wire.read()<<8 | Wire.read();
+  Wire.read(); Wire.read();
+  int16_t GyX = Wire.read()<<8 | Wire.read();
+  int16_t GyY = Wire.read()<<8 | Wire.read();
+  int16_t GyZ = Wire.read()<<8 | Wire.read();
+
+  ax = AcX / 16384.0;
+  ay = AcY / 16384.0;
+  az = AcZ / 16384.0;
+  gx = (GyX / 131.0) * (PI / 180.0);
+  gy = (GyY / 131.0) * (PI / 180.0);
+  gz = (GyZ / 131.0) * (PI / 180.0);
+}
+
+void aciHesapla(float ax, float ay, float az,
+                float gx, float gy, float gz, float dt) {
+  float accelPitch = atan2(ay, sqrt(ax * ax + az * az)) * 180.0 / PI;
+  float accelRoll = atan2(-ax, az) * 180.0 / PI;
+  float gyroPitchRate = gx * 180.0 / PI;
+  float gyroRollRate = gy * 180.0 / PI;
+  pitch = ALPHA * (pitch + gyroPitchRate * dt) + (1.0 - ALPHA) * accelPitch;
+  roll = ALPHA * (roll + gyroRollRate * dt) + (1.0 - ALPHA) * accelRoll;
 }
 
 void buzzerKontrol() {

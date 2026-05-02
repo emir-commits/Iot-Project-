@@ -234,12 +234,11 @@ canvas{width:100%!important;height:100%!important}
 </div>
 
 <script>
-// ===================== STATE =====================
 let espIp = '';
 let polling = null;
 let connected = false;
 
-// Chart data
+// Chart
 const MAX_POINTS = 100;
 let pitchHistory = [];
 let rollHistory = [];
@@ -252,12 +251,11 @@ let warningCount = 0;
 let devSum = 0;
 let maxDeviation = 0;
 
-// ===================== CONNECT =====================
 function connectESP() {
   espIp = document.getElementById('espIp').value.trim();
   if (!espIp) return;
   if (polling) clearInterval(polling);
-  fetchData(); // immediate first call
+  fetchData(); 
   polling = setInterval(fetchData, 500);
 }
 
@@ -279,7 +277,6 @@ function setConnected(state) {
   else if (!state && connected) { connected = false; badge.className = 'status-badge offline'; text.textContent = 'Bağlantı Yok'; }
 }
 
-// ===================== UPDATE UI =====================
 function updateUI(d) {
   // d = { pitch, roll, refPitch, refRoll, sitting, bad, buzzer, mode, sittingMs }
   const pitch = d.pitch || 0;
@@ -384,7 +381,6 @@ function setGauge(id, angle) {
   el.style.borderLeftColor = 'transparent';
 }
 
-// ===================== CHART =====================
 function drawChart() {
   const canvas = document.getElementById('chart');
   const ctx = canvas.getContext('2d');
@@ -507,7 +503,6 @@ function startDemo() {
   }, 500);
 }
 
-// ===================== CONTROLS =====================
 let buzzerMuted = false;
 
 async function toggleBuzzer() {
