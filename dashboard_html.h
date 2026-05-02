@@ -1,3 +1,8 @@
+﻿#ifndef DASHBOARD_HTML_H
+#define DASHBOARD_HTML_H
+#include <pgmspace.h>
+
+const char DASHBOARD_HTML[] PROGMEM = R"=====(
 <!DOCTYPE html>
 <html lang="tr">
 
@@ -1015,3 +1020,6 @@
 </body>
 
 </html>
+)=====";
+
+#endif

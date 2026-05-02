@@ -8,9 +8,10 @@
 #include <Adafruit_GFX.h>
 #include <ArduinoJson.h>
 #include <math.h>
+#include "dashboard_html.h"
 
-const char* WIFI_SSID = "TurkTelekom_Z34ET";
-const char* WIFI_PASS = "aB3E0D93cC48f";
+const char* WIFI_SSID = "Emir";
+const char* WIFI_PASS = "12345678";
 
 #define LIMIT_SWITCH_PIN  27
 #define BUZZER_PIN        18
@@ -52,6 +53,8 @@ bool buzzerDurumu = false;
 bool wifiConnected = false;
 bool buzzerMuted = false;
 bool remoteRecalib = false;
+bool manualBuzzer = false;
+bool forceSit = false;
 
 void sistemBaslat();
 void wifiBaslat();
@@ -87,9 +90,7 @@ void loop() {
   server.handleClient();
 
   unsigned long simdi = millis();
-  // TODO: switch baglaninca asagidaki satiri ac
-  // bool oturuyor = (digitalRead(LIMIT_SWITCH_PIN) == LOW);
-  bool oturuyor = true;
+  bool oturuyor = (digitalRead(LIMIT_SWITCH_PIN) == LOW) || forceSit;
 
   switch (durum) {
 
@@ -187,9 +188,9 @@ void loop() {
         unsigned long oturmaSuresi = simdi - oturmaBaslangic;
         oledTakipEkrani(pitch, roll, !kotuDurus, oturmaSuresi);
       }
-      buzzerKontrol();
       break;
   }
+  buzzerKontrol();
 }
 
 void wifiBaslat() {
@@ -240,6 +241,10 @@ void wifiBaslat() {
 void setupWebServer() {
   if (!wifiConnected) return;
 
+  server.on("/", HTTP_GET, []() {
+    server.send(200, "text/html", DASHBOARD_HTML);
+  });
+  
   server.on("/data", HTTP_OPTIONS, handleCORS);
   server.on("/control", HTTP_OPTIONS, handleCORS);
   server.on("/data", HTTP_GET, handleData);
@@ -269,6 +274,8 @@ void handleData() {
   doc["bad"] = kotuDurus;
   doc["buzzer"] = buzzerAktif;
   doc["mode"] = (int)durum;
+  doc["forceSit"] = forceSit;
+  doc["manualBuzzer"] = manualBuzzer;
 
   if (durum == TAKIP) {
     doc["sittingMs"] = millis() - oturmaBaslangic;
@@ -294,6 +301,15 @@ void handleControl() {
 
   if (server.hasArg("recalibrate")) {
     remoteRecalib = true;
+  }
+
+  if (server.hasArg("manual_buzzer")) {
+    manualBuzzer = (server.arg("manual_buzzer") == "1");
+    if (!manualBuzzer) digitalWrite(BUZZER_PIN, LOW);
+  }
+
+  if (server.hasArg("force_sit")) {
+    forceSit = (server.arg("force_sit") == "1");
   }
 
   if (server.hasArg("threshold")) {
@@ -386,7 +402,16 @@ void aciHesapla(float ax, float ay, float az,
 }
 
 void buzzerKontrol() {
-  if (!buzzerAktif) return;
+  if (manualBuzzer) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    return;
+  }
+  
+  if (!buzzerAktif) {
+    // Only return, the off state is managed elsewhere or here
+    return;
+  }
+  
   unsigned long simdi = millis();
   if (simdi - sonBuzzerToggle >= (buzzerDurumu ? BUZZER_BEEP_MS : BUZZER_PAUSE_MS)) {
     buzzerDurumu = !buzzerDurumu;
